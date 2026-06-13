@@ -1,398 +1,279 @@
 ---
 name: autoresearch
 description: |
-  Autonomous experiment loop — the agent interviews you to understand the optimization
-  target, scaffolds a self-running research project (program.md + fixed harness +
-  editable sandbox), then iterates autonomously: modify → commit → run → evaluate →
-  keep/discard → repeat. Based on the karpathy/autoresearch pattern.
-  Trigger when user says "use autoresearch to...", "autoresearch...",
-  "自动研究...", "自主实验...", or asks to set up an autonomous optimization loop.
+  Autonomous experiment loop — the agent interviews you, scaffolds a research
+  project, then iterates autonomously: modify → commit → run → evaluate →
+  keep/discard → repeat. Supports multi-agent parallel exploration, adversarial
+  verification, checkpoint/resume, and smart experiment selection.
+  Based on karpathy/autoresearch. Trigger when user says "use autoresearch",
+  "autoresearch...", "自主研究", "自动优化".
 version: 1.0.0
 author: init-cc
-tags: [autoresearch, autonomous, experiment, optimization, agent-loop, automation]
+tags: [autoresearch, autonomous, experiment, optimization, agent-loop, multi-agent]
 ---
 
-# AutoResearch — Autonomous Experiment Loop
+# AutoResearch — 自主实验循环
 
-> *"You program the research org in Markdown. The agent runs experiments while you sleep."*
+> *"Program the research org in Markdown. The agent runs experiments while you sleep."*
+> *"用 Markdown 管理你的研究团队。Agent 在你睡觉时自动做实验。"*
 
-## What This Skill Does
+## Skill Overview ─────────
 
-This skill implements the **autoresearch pattern** originally designed by Andrej Karpathy
-([karpathy/autoresearch](https://github.com/karpathy/autoresearch)) for autonomous LLM
-training research, generalized to work for **any optimization task**.
+This skill implements an **autonomous experiment engine**. It takes any optimization
+task — code performance, query tuning, hyperparameter search, config optimization,
+algorithm comparison — and runs it as a self-driving git-backed experiment loop.
 
-The core insight: three roles, three files.
+### What makes this different
 
-| Role | File | Who Touches It |
-|------|------|----------------|
-| 🧠 **Research Agenda** | `program.md` | **Human** — writes and iterates the research plan |
-| 🔒 **Fixed Infrastructure** | `prepare.py` (or equiv) | **Nobody** — locked after initial setup |
-| 🛠️ **Editable Sandbox** | `train.py` (or equiv) | **Agent** — freely modifies within constraints |
+| Feature | Description |
+|---|---|
+| 🧠 **Deep Discovery** | 4-round structured interview before any code is written |
+| 🔀 **Multi-Agent Parallel** | Fan out experiments across isolated git worktrees |
+| ⚔️ **Adversarial Verify** | Second agent skeptically checks each "improvement" before keeping |
+| 💾 **Checkpoint/Resume** | Survives session restarts — pick up where you left off |
+| 📊 **Smart Selection** | Analyzes past results to avoid dead ends and prioritize high-ROI changes |
+| 📐 **Domain Templates** | Pre-built program.md fragments for common optimization domains |
 
-The agent runs a git-backed experiment loop:
+### Command Reference
 
-```
-LOOP FOREVER:
-  1. Read context (program.md + current code)
-  2. Form hypothesis, edit the sandbox file
-  3. git commit the change
-  4. Run experiment, capture output to run.log
-  5. Parse metric from run.log
-  6. If improved → keep commit, advance branch
-  7. If worse → git reset (discard)
-  8. If crashed → attempt fix, or mark crash and move on
-  9. Record to results.tsv
-  10. Repeat until human interrupts
-```
-
----
-
-## Phase 0: Trigger Detection
-
-This skill triggers when the user says any of:
-
-- "use autoresearch to ..."
-- "autoresearch ..."
-- "自主研究 ..." / "自动研究 ..."
-- "set up an autonomous experiment loop for ..."
-- "帮我自动优化 ..." + context implying autonomous iteration
-
-When triggered, **do NOT immediately start the loop**. Go to Phase 1 (Discovery Interview).
+| Command | What it does |
+|---|---|
+| `/autoresearch` | **Main loop** — interview → scaffold → experiment forever |
+| `/autoresearch:parallel` | Multi-agent mode — N agents explore different hypotheses simultaneously |
+| `/autoresearch:resume` | Resume from last checkpoint after session restart |
+| `/autoresearch:review` | Pause loop, present top results for human review, apply feedback |
+| `/autoresearch:analyze` | Analyze results.tsv for patterns, suggest next directions |
 
 ---
 
-## Phase 1: Discovery Interview
+## Phase 1: Discovery Interview (`/autoresearch` entry point)
 
-Before creating any files, you MUST interview the user to understand the task.
-Ask these questions. You can batch 2–3 at a time, but cover ALL of them
-before moving to Phase 2.
+When the user invokes this skill, do NOT immediately start experimenting.
+First, conduct a structured interview. Ask these 10 questions across 4 rounds.
 
-### Round 1: Core Task Definition (ask first)
-
-```
-To set up your AutoResearch project, I need to understand what we're optimizing.
-Please answer these:
-
-1. **What are we optimizing?** Describe the task in one sentence.
-   (e.g., "A Python web crawler that scrapes 100 target URLs as fast as possible",
-    "A PostgreSQL query that joins 5 tables and returns aggregated results",
-    "A PyTorch image classifier on CIFAR-10")
-
-2. **Which file(s) will the agent edit?** Pick ONE primary file that contains
-   the code/config the agent should modify.
-   (e.g., `crawler.py`, `query.sql`, `model.py`)
-   - This file should contain tunable knobs (hyperparameters, algorithms, configs)
-   - The agent will freely edit anything in this file
-
-3. **How do we run ONE experiment?** What CLI command executes a single trial?
-   (e.g., `python crawler.py`, `psql -f query.sql`, `python train.py`)
-```
-
-### Round 2: Metric & Evaluation (ask second)
+### Round 1 — Core Task Definition
 
 ```
-4. **What is the SINGLE metric we optimize for?**
-   Give me:
-   - The exact grep pattern to extract it from output
-     (e.g., `grep "^total_time_seconds:" run.log`)
-   - Whether **lower is better** or **higher is better**
-   - A rough baseline value if you know it
+I'll help you set up an autonomous experiment loop. First, let me understand
+what we're optimizing:
+
+1. What are we optimizing? (one sentence)
+   e.g. "A Python web crawler's throughput on 100 target URLs"
+
+2. Which file(s) will the agent edit? Pick ONE primary file.
+   This file contains the tunable knobs — hyperparams, algorithms, configs.
+   e.g. crawler.py, model.py, query.sql
+
+3. How do we run ONE experiment? (CLI command)
+   e.g. python crawler.py, psql -f query.sql, python train.py
+```
+
+### Round 2 — Metric & Correctness
+
+```
+4. What is the SINGLE metric we optimize for?
+   - Exact grep pattern to extract it: e.g. grep "^total_time_seconds:" run.log
+   - Lower is better or higher is better?
+   - Rough baseline value if known
    - Units (seconds, %, points, etc.)
 
-5. **Is there a correctness/quality constraint?**
-   Some optimizations can't sacrifice correctness. For example:
-   - "Crawler must still return 100% correct results"
-   - "Query must return identical rows to the reference"
-   - "Model accuracy must not drop below 95%"
-   If yes, how is correctness measured?
+5. Is there a correctness/quality constraint?
+   e.g. "Must return 100% correct results compared to reference"
+   e.g. "Model accuracy must not drop below 95%"
+   If yes, how do we measure correctness?
 ```
 
-### Round 3: Constraints & Budget (ask third)
+### Round 3 — Constraints & Budget
 
 ```
-6. **What CANNOT the agent change?**
-   Which files, functions, or configurations are off-limits?
-   - Fixed test data / evaluation harness
-   - External dependencies (can't `pip install` new packages)
-   - API rate limits
-   - Output format requirements
+6. What CANNOT the agent change?
+   - Fixed files/functions (especially the evaluation harness)
+   - External dependencies (can't pip install new packages)
+   - API rate limits, output format requirements
 
-7. **Time/resource budget per experiment:**
-   - Fixed wall-clock time? (e.g., 5 minutes)
-   - Fixed data size? (e.g., 100 test URLs, 10K rows)
-   - Or both?
-   If time-based, what's the timeout before we kill a stuck experiment?
+7. Time/resource budget per experiment:
+   - Fixed wall-clock time? (e.g. 5 minutes per run)
+   - Fixed data size? (e.g. 100 test URLs per run)
+   - Timeout before killing a stuck experiment?
 
-8. **Any resource constraints?**
-   - Memory limit
-   - GPU VRAM limit
-   - API call budget
-   - Network bandwidth
+8. Any resource constraints?
+   - Memory limit, GPU VRAM, API call budget, network bandwidth
 ```
 
-### Round 4: Project Setup (ask fourth)
+### Round 4 — Project Setup
 
 ```
-9. **Where should the project live?**
-   - Create a new directory? (recommended: `./autoresearch-<task>/`)
-   - Use an existing project directory?
-   If existing, I'll add the autoresearch scaffold files without disrupting your code.
+9. Where should the project live?
+   - Create new directory (recommended: ./autoresearch-<task>/)
+   - Use existing project directory?
 
-10. **What should we call this research run?**
-    A short tag like `crawler-opt`, `sql-tuning`, `jun14`.
-    This becomes the git branch name: `autoresearch/<tag>`
+10. What should we call this research run?
+    A short tag: crawler-opt, sql-tuning, jun14
+    Becomes the git branch name: autoresearch/<tag>
 ```
 
-### After All Answers Are Collected
+### After All Answers — Confirm
 
-Before moving to Phase 2, **summarize your understanding** back to the user and ask
-for confirmation. Show a table like:
+Summarize in a table and ask for confirmation:
 
 ```
 📋 AutoResearch Setup Summary
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Task:          Optimize web crawler speed
 Editable:      crawler.py
 Run command:   python crawler.py
 Metric:        total_time_seconds (lower better)
 Constraint:    Must maintain 100% accuracy
 Budget:        100 URLs per run (~30 sec)
+Timeout:       120 seconds
 Project dir:   ./autoresearch-crawler/
 Run tag:       crawler-jun14
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Does this look correct? I'll then scaffold the project and start experimenting.
+Does this look correct? I'll scaffold and start experimenting.
 ```
 
-Do NOT proceed to Phase 2 until the user confirms.
+Do NOT proceed until the user confirms.
 
 ### Handling Vague Answers
 
-If the user can't specify a metric or run command:
-- Help them design one: "Let's add a timer and print statement to your script"
-- Offer to instrument their code with measurement before starting
-- If no clear single metric exists, propose a composite or the most important one
-
-If the user can't identify the editable file:
-- Ask which file has the most "knobs" (parameters, algorithms, configs)
-- If everything is one file, that file IS the editable sandbox — the fixed
-  infrastructure can be a separate test runner you create
+- No metric yet? → Help them add measurement code: "Let's add a timer and print"
+- No editable file? → The main script IS the editable file; we create a separate test harness
+- No test data? → Help them create a representative test set first
 
 ---
 
 ## Phase 2: Scaffold Generation
 
-Once the user confirms, generate these files in the project directory.
+Once user confirms, generate these files:
 
-### File 1: `program.md` — The Research Agenda
+### File 1: `program.md` — The Research Constitution
 
-This is the MOST IMPORTANT file. It's the "constitution" the agent follows.
-Generate it using the template below, filling in `{PLACEHOLDERS}` from the
-discovery interview.
+This is the most important file. Use this template, filling `{PLACEHOLDERS}` from
+the interview:
 
 ```markdown
 # AutoResearch: {TASK_NAME}
 
-{ONE_SENTENCE_TASK_DESCRIPTION}
+{ONE_SENTENCE_DESCRIPTION}
 
 ## Setup
 
-To set up a new experiment, work with the user to:
+1. Branch: `autoresearch/{tag}` (must not exist — this is a fresh run)
+2. Create branch: `git checkout -b autoresearch/{tag}`
+3. Read context files: `{EDITABLE_FILE}`, `{FIXED_FILE}`, and any others
+4. Verify infrastructure: {HOW_TO_VERIFY}
+5. Initialize `results.tsv` with header row
+6. Run BASELINE first — do not change anything yet
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `{tag}`).
-   The branch `autoresearch/{tag}` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/{tag}` from current master/main.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `{EDITABLE_FILE}` — the file you modify. {WHAT_THIS_FILE_CONTAINS}.
-   - `{FIXED_FILE}` — {WHAT_THE_FIXED_FILE_IS}. Do not modify.
-   - Any other context files: `{OTHER_CONTEXT_FILES}`
-4. **Verify infrastructure**: {HOW_TO_VERIFY_THINGS_ARE_READY}.
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row.
-   The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
+## Rules
 
-## Experimentation
+**You CAN modify:** `{EDITABLE_FILE}` — {WHAT_CAN_CHANGE}
+**You CANNOT modify:** `{FIXED_FILE}` — {WHY}
+**You CANNOT:** install new packages, change evaluation logic, {OTHER_CONSTRAINTS}
 
-Each experiment runs {BUDGET_DESCRIPTION}. You launch it as: `{RUN_COMMAND} > run.log 2>&1`
+**Goal:** {METRIC_NAME} — {LOWER_OR_HIGHER}_IS_BETTER
+**Budget:** {TIME_OR_DATA_BUDGET} per experiment
+**Correctness:** {CORRECTNESS_CONSTRAINT_IF_ANY}
 
-**What you CAN do:**
-- Modify `{EDITABLE_FILE}` — this is the only file you edit. {WHAT_CAN_BE_CHANGED}.
+**Simplicity criterion:** Prefer simpler solutions. Deleting code while maintaining
+performance is a WIN. A tiny gain from 20 lines of hacky code is NOT worth it.
 
-**What you CANNOT do:**
-- Modify `{FIXED_FILE}`. It is read-only. {WHY_IT_CANT_BE_CHANGED}.
-- Install new packages or add dependencies. You can only use what's already available.
-- Modify the evaluation harness. The {EVAL_FUNCTION} in `{FIXED_FILE}` is the ground truth.
-- {ANY_OTHER_CONSTRAINTS}
+## Output Format
 
-**The goal is simple: {GOAL_STATEMENT}.**
-
-**{RESOURCE_CONSTRAINT_NOTE}**
-
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement
-that adds ugly complexity is not worth it. Conversely, removing something and getting
-equal or better results is a great outcome — that's a simplification win. When evaluating
-whether to keep a change, weigh the complexity cost against the improvement magnitude.
-
-**The first run**: Your very first run should always be to establish the baseline,
-so you will run the {EDITABLE_FILE} as is, without any modifications.
-
-## Output format
-
-Once the experiment finishes it prints a summary. Extract the key metric:
-
+The experiment prints:
 ```
-{METRIC_GREP_COMMAND}
+{METRIC_NAME}: {VALUE}
+{OTHER_METRICS}
 ```
 
-{ADDITIONAL_METRICS_TO_GREP_IF_ANY}
+Extract with: `{GREP_COMMAND}`
 
-{METRIC_DIRECTION_NOTE} (Lower is better / Higher is better)
+## Logging (results.tsv)
 
-## Logging results
+Tab-separated. Header: `commit\t{METRIC_COL}\tstatus\tdescription`
 
-When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated).
+- status: `keep` | `discard` | `crash`
+- {METRIC_COL}: use {CRASH_SENTINEL} for crashes
+- Do NOT commit results.tsv — it's the lab notebook
 
-The TSV has a header row and 5 columns:
-
-```
-commit	{METRIC_COLUMN}	{ANY_OTHER_COLUMNS}	status	description
-```
-
-1. git commit hash (short, 7 chars)
-2. {METRIC_COLUMN_DESCRIPTION} — use {CRASH_PLACEHOLDER} for crashes
-3. {OTHER_COLUMN_DESCRIPTIONS}
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried
-
-Example:
-
-```
-commit	{METRIC_COLUMN}	status	description
-a1b2c3d	{BASELINE_VALUE}	keep	baseline (no changes)
-b2c3d4e	{IMPROVED_VALUE}	keep	{EXAMPLE_IMPROVEMENT}
-c3d4e5f	{WORSENED_VALUE}	discard	{EXAMPLE_DISCARD}
-d4e5f6g	{CRASH_VALUE}	crash	{EXAMPLE_CRASH}
-```
-
-## The experiment loop
-
-The experiment runs on a dedicated branch (e.g. `autoresearch/{tag}`).
+## The Loop
 
 LOOP FOREVER:
+  1. Read program.md, {EDITABLE_FILE}, and last 20 lines of results.tsv
+  2. Form a clear hypothesis. Make ONE logical change.
+  3. git commit -m "<descriptive one-liner>"
+  4. `{RUN_COMMAND} > run.log 2>&1`
+  5. `{GREP_COMMAND}` — if empty, `tail -50 run.log` for crash
+  6. If {METRIC} {IMPROVED_DIRECTION} AND correctness passes → KEEP
+  7. If {METRIC} {WORSE_OR_SAME} OR correctness fails → DISCARD: `git reset --hard HEAD~1`
+  8. If crash → fix trivial ones, skip fundamental ones
+  9. Append to results.tsv
+  10. Repeat. NEVER STOP. NEVER ASK "should I continue?"
 
-1. Look at the git state: the current branch/commit we're on
-2. Tune `{EDITABLE_FILE}` with an experimental idea by directly editing the code.
-3. git commit the change with a descriptive one-line message
-4. Run the experiment: `{RUN_COMMAND} > run.log 2>&1` (redirect everything — do NOT
-   use tee or let output flood your context)
-5. Read out the results: `{METRIC_GREP_COMMAND}`
-6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read
-   the error and attempt a fix. If you can't get things to work after more than a
-   few attempts, give up on this idea.
-7. Record the results in results.tsv (NOTE: do not commit results.tsv — leave it
-   untracked by git)
-8. If {METRIC_NAME} {IMPROVED_DIRECTION}, you "advance" the branch, keeping the
-   git commit
-9. If {METRIC_NAME} is {EQUAL_OR_WORSE_DIRECTION}, you git reset back to where
-   you started (keeping the working tree changes discarded)
-10. {ADDITIONAL_CHECKS} (e.g., "If accuracy dropped below threshold, discard regardless of metric")
+## Edge Cases
 
-The idea is that you are a completely autonomous researcher trying things out.
-If they work, keep. If they don't, discard. And you're advancing the branch so
-that you can iterate.
-
-**Timeout**: Each experiment should take ~{EXPECTED_DURATION}. If a run exceeds
-{TIMEOUT_DURATION}, kill it and treat it as a failure (discard and revert).
-
-**Crashes**: If a run crashes (resource exhaustion, bug, etc.), use your judgment:
-If it's something trivial (a typo, a missing import), fix it and re-run. If the
-idea itself is fundamentally broken, log "crash" as the status in results.tsv
-and move on.
-
-**NEVER STOP**: Once the experiment loop has begun (after the initial setup), do
-NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?"
-or "is this a good stopping point?". The human might be asleep, or gone from the
-computer and expects you to continue working *indefinitely* until you are manually
-stopped. You are autonomous.
-
-**If stuck**: If you run out of ideas, don't give up. Re-read the in-scope files
-for new angles. Try more aggressive changes. Try simplifying. Try combining previous
-near-misses. Try reversing assumptions. The loop runs until the human interrupts
-you, period.
+- **3 consecutive crashes** → stop, something is systemically broken
+- **10+ straight discards** → try larger, more radical changes
+- **Timeout** → kill, mark crash, revert
+- **Resource exhaustion** → scale back, log usage
+- **Correctness failure** → discard no matter how good the metric is
 ```
 
-### File 2: Fixed Infrastructure (`prepare.py` equivalent)
-
-This file contains everything the agent **cannot change**:
+### File 2: Fixed Infrastructure (`prepare.py` or equivalent)
 
 ```python
 """
 Fixed infrastructure for {TASK_NAME} AutoResearch.
-DO NOT MODIFY — this is the ground truth evaluation harness.
+DO NOT MODIFY — ground truth evaluation harness.
 """
 
 # ============================================================================
 # Fixed Constants (do not modify)
 # ============================================================================
-
 {HARDCODED_CONSTANTS}
 
 # ============================================================================
-# Fixed Test Data / Evaluation (do not modify)
+# Fixed Evaluation (do not modify)  
 # ============================================================================
-
-{EVALUATION_FUNCTION}
+{EVALUATION_FUNCTION_THAT_IMPORTS_FROM_EDITABLE_FILE}
 
 # ============================================================================
 # Runner (do not modify)
 # ============================================================================
-
 if __name__ == "__main__":
-    # This is the fixed entry point that calls into the editable code
-    {RUNNER_LOGIC}
+    result = run_evaluation()
+    print(f"{METRIC_NAME}: {result.metric:.6f}")
+    print(f"correctness_ok: {result.correctness}")
 ```
 
-Key design rules for this file:
-1. It imports from the editable file (if needed)
-2. It defines the evaluation metric precisely
-3. It prints results in a grep-friendly format
-4. It does NOT contain any tunable parameters
-5. Comment `# DO NOT MODIFY` on every section
+### File 3: Editable Sandbox (`train.py` or equivalent)
 
-### File 3: Editable Sandbox (`train.py` equivalent)
-
-This is the file the agent will edit. It should:
-
-1. Have clear hyperparameter/config constants at the top (easy to tune)
-2. Contain the main logic the agent can restructure
-3. NOT contain the fixed evaluation — that's in prepare.py
-4. Print metrics at the end in a grep-friendly format
+The file the agent freely modifies. Structure:
 
 ```python
 """
 {EDITABLE_FILE_DESCRIPTION}
-AutoResearch editable file — the agent modifies this freely.
+AutoResearch — agent modifies this file freely.
 """
 
 # ============================================================================
-# Tunable Parameters (edit these freely)
+# Tunable Parameters (edit these)
 # ============================================================================
-
-{TUNABLE_PARAMS_WITH_DEFAULTS}
+{TUNABLE_PARAMS_WITH_DEFAULTS_AND_COMMENTS}
 
 # ============================================================================
 # Main Logic (edit freely)
 # ============================================================================
-
 {MAIN_LOGIC}
 
 # ============================================================================
-# Run (typically calls fixed evaluation from prepare.py)
+# Entry point — calls fixed evaluation from prepare.py
 # ============================================================================
-
 if __name__ == "__main__":
-    {RUN_LOGIC_THAT_PRINTS_METRICS}
+    from prepare import run_evaluation
+    result = run_evaluation(main_function)
+    print(f"{METRIC_NAME}: {result.metric:.6f}")
 ```
 
 ### File 4: `.gitignore`
@@ -402,106 +283,214 @@ run.log
 results.tsv
 __pycache__/
 *.pyc
-.DS_Store
+.autoresearch_checkpoint.json
 ```
 
-### Generating Tips
+### After Generation
 
-- These files should be **functional from the start** — the baseline run must work
-- If the project already has code, adapt the existing files instead of overwriting
-- Keep files small (< 500 lines each) so the agent can read them quickly
-- The metric output format must be consistent: `metric_name: <value>` one per line
+1. Run the baseline experiment to verify everything works
+2. Record the baseline in results.tsv
+3. Create git branch `autoresearch/<tag>`, commit the initial scaffold
+4. Confirm: "Baseline: {VALUE}. Starting the experiment loop. I will not stop
+   until you interrupt me."
 
 ---
 
 ## Phase 3: Autonomous Experiment Loop
 
-After scaffolding is confirmed and the baseline runs successfully, enter the loop.
-This phase follows `program.md`'s LOOP FOREVER exactly.
+### Core Loop (Standard Mode)
 
-### Important Loop Behaviors
-
-#### Before Each Experiment
-
-1. **Read context files** — at minimum, re-read `program.md` and the editable file
-   to have fresh context
-2. **Review recent results** — check `results.tsv` (last 10-20 lines) to avoid
-   repeating failed ideas
-3. **Form a clear hypothesis** — "I think changing X from A to B will improve
-   the metric because Y"
-
-#### Making Changes
-
-- Make ONE logical change per experiment (not 5 unrelated things)
-- Write a descriptive git commit message explaining the hypothesis
-- If the change is complex, add a brief comment in the code explaining the reasoning
-
-#### Running the Experiment
-
-```bash
-{RUN_COMMAND} > run.log 2>&1
+```
+┌──────────────────────────────────────────────────┐
+│                 AUTONOMOUS LOOP                  │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐   │
+│  │  READ    │ →  │  EDIT    │ →  │  COMMIT  │   │
+│  │ context  │    │ one Δ   │    │ w/ msg   │   │
+│  └──────────┘    └──────────┘    └──────────┘   │
+│       ↑                                ↓         │
+│       │                          ┌──────────┐   │
+│       │                          │   RUN    │   │
+│       │                          │ >run.log │   │
+│       │                          └──────────┘   │
+│       │                                ↓         │
+│       │                          ┌──────────┐   │
+│       │                          │  GREP    │   │
+│       │                          │ metric   │   │
+│       │                          └──────────┘   │
+│       │                           ↓       ↓      │
+│       │                      improved   worse   │
+│       │                           ↓       ↓      │
+│       │                        KEEP    RESET     │
+│       │                         ↓        ↓       │
+│       │                    ┌──────────────────┐  │
+│       └───────────────────│  RECORD to .tsv   │  │
+│                           └──────────────────┘  │
+│                                                  │
+│              REPEAT FOREVER                      │
+│         (until human interrupts)                 │
+└──────────────────────────────────────────────────┘
 ```
 
-- Always redirect both stdout and stderr
-- Do NOT use `tee` — it fills your context window
-- Set a timeout alarm if the command might hang
+### Smart Experiment Selection
 
-#### Evaluating Results
+Before each experiment, the agent SHOULD:
 
-```bash
-grep "^{METRIC_PATTERN}" run.log
+1. **Read last 20 lines of results.tsv** — what's been tried recently?
+2. **Categorize past attempts** — which directions worked? which failed?
+3. **Avoid repeating failures** — if "increase X" failed 3 times, try "decrease X"
+4. **Exploit gradients** — if "more Y helps", try even more Y
+5. **Inject randomness** — every 5th experiment, try something completely different
+6. **Re-read program.md** — sometimes the answer is in the instructions
+
+Pattern to use:
+```
+Recent results analysis:
+- Last 5 attempts: 2 keeps (both about connection pooling), 3 discards (LR changes)
+- Hypothesis: connection pooling direction is promising → try larger pool sizes
+- Anti-pattern detected: 3 failed attempts at tuning X → try the opposite direction
 ```
 
-- If empty output → the run crashed, check `tail -n 50 run.log`
-- Parse the numeric value carefully
-- Compare to the current best (from `results.tsv`)
+### Adversarial Verification (Quality Gate)
 
-#### Decision Matrix
+**Before marking any experiment as KEEP**, perform a quick adversarial check:
 
-| Metric | Correctness | Action |
-|--------|-------------|--------|
-| Improved | Passes | ✅ **KEEP** — advance branch |
-| Improved | Fails | ❌ **DISCARD** — correctness is non-negotiable |
-| Same | Passes | ❌ **DISCARD** — no improvement, revert |
-| Same | Fails | ❌ **DISCARD** |
-| Worse | Passes | ❌ **DISCARD** — revert to last good commit |
-| Worse | Fails | ❌ **DISCARD** |
-| Crash | N/A | 🔧 **FIX or SKIP** — try quick fix (typo, import), else mark crash |
+1. Re-read the diff: `git diff HEAD~1`
+2. Ask: "Is this improvement genuine, or could it be noise / cheating?"
+3. Check specifically:
+   - Did we accidentally break the correctness constraint?
+   - Is the improvement within measurement noise?
+   - Did we somehow bypass the evaluation rather than truly improve?
+   - Could this be a lucky random seed rather than a real improvement?
 
-#### Advancing the Branch (KEEP)
+If ANY doubt → re-run the experiment once to confirm. If the second run doesn't
+reproduce the improvement → DISCARD.
 
-```bash
-# Commit is already made — just continue
-# The branch now points to the improved commit
+**Decision Matrix:**
+
+| Primary Metric | Correctness | Adversarial Check | Action |
+|---|---|---|---|
+| Improved | ✅ Pass | ✅ Genuine | **KEEP** |
+| Improved | ✅ Pass | ⚠️ Suspicious | Re-run once |
+| Improved | ❌ Fail | — | **DISCARD** |
+| Same/Worse | ✅ Pass | — | **DISCARD** |
+| Same/Worse | ❌ Fail | — | **DISCARD** |
+| Crash | — | — | Fix trivial, else skip |
+
+### Checkpoint System
+
+After every experiment, write state to `.autoresearch_checkpoint.json`:
+
+```json
+{
+  "branch": "autoresearch/crawler-jun14",
+  "last_commit": "a1b2c3d",
+  "best_metric": 2.345,
+  "best_commit": "b2c3d4e",
+  "total_experiments": 47,
+  "keeps": 12,
+  "discards": 33,
+  "crashes": 2,
+  "last_updated": "2026-06-14T03:27:00",
+  "current_direction": "exploring connection pooling optimizations"
+}
 ```
 
-#### Discarding (DISCARD)
+This enables `/autoresearch:resume` to pick up where it left off.
 
-```bash
-git reset --hard HEAD~1  # Revert the bad commit entirely
+---
+
+## Phase 4: Multi-Agent Parallel Mode (`/autoresearch:parallel`)
+
+When the user requests parallel exploration, use Claude Code's sub-agent
+infrastructure to explore different hypotheses simultaneously.
+
+### When to Use
+
+- Large search space with many orthogonal directions
+- User has enough compute to run multiple experiments at once
+- Initial exploration phase — need to find which direction is most promising
+
+### How It Works
+
+```
+                    ┌─ worktree-1: explore architecture changes ─┐
+BASE BRANCH ────────├─ worktree-2: explore optimizer changes  ───┤─ MERGE BEST
+                    ├─ worktree-3: explore data pipeline ────────┤
+                    └─ worktree-4: explore hyperparameters ──────┘
 ```
 
-#### After Each Experiment
+Implementation:
 
-Always append to results.tsv:
+1. Establish baseline on main branch
+2. Identify N orthogonal research directions from program.md
+3. For each direction, create a git worktree on a sub-branch:
+   `autoresearch/<tag>/direction-1`, `autoresearch/<tag>/direction-2`, etc.
+4. Spawn one sub-agent per worktree, each running the standard loop
+5. Sub-agents report results independently to their own results.tsv
+6. Periodically (every ~10 experiments per agent), review all branches
+7. Merge improvements from the best-performing branch back to master
+8. Kill underperforming branches, spawn new directions
+
+### Sub-Agent Prompt Template
+
 ```
-<commit_hash>\t<metric_value>\t<status>\t<description>
+You are an AutoResearch agent working on direction: {DIRECTION_DESCRIPTION}.
+Your sandbox: {EDITABLE_FILE}
+Your metric: {METRIC_GREP}
+Your branch: autoresearch/{tag}/{direction}
+
+Follow the standard experiment loop: modify → commit → run → grep →
+keep/discard → record → repeat. NEVER STOP.
+
+Report your best result so far after every 10 experiments.
 ```
 
-Do NOT commit results.tsv — it's the raw lab notebook.
+### Parallel Mode Decision Matrix
 
-#### Experiment Naming
+After 10 experiments per branch:
 
-Good descriptions:
-- `increase learning rate from 0.01 to 0.05`
-- `replace BFS with A* search`
-- `add connection pooling (pool_size=20)`
-- `switch from requests to aiohttp`
+| Branch Performance | Action |
+|---|---|
+| Best metric, improving trend | **Continue**, allocate more resources |
+| Good metric, plateaued | **Continue** at lower priority |
+| Poor metric, no improvement | **Kill branch**, analyze why |
+| All branches plateaued | **Merge best**, start new directions |
 
-Bad descriptions:
-- `try something`
-- `fix`
-- `experiment 42`
+---
+
+## Phase 5: Resume (`/autoresearch:resume`)
+
+When the user comes back after a session restart:
+
+1. Read `.autoresearch_checkpoint.json`
+2. Checkout the branch: `git checkout {branch}`
+3. Read `program.md`, the editable file, and last 20 lines of results.tsv
+4. Report status to user:
+   ```
+   📊 Resuming AutoResearch: {tag}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Best metric:   {best_metric} (commit {best_commit})
+   Experiments:   {total} total, {keeps} kept, {discards} discarded, {crashes} crashed
+   Last direction: {current_direction}
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Continuing the loop...
+   ```
+5. Enter the standard loop from where it left off
+
+---
+
+## Phase 6: Human Review (`/autoresearch:review`)
+
+Pause the loop and present findings for human feedback:
+
+1. Show the top 5 best commits with their metrics and descriptions
+2. Show a summary of what was tried and what worked
+3. Ask: "Any new directions you want me to explore? Any constraints to add?"
+4. Apply feedback to `program.md`
+5. Resume the loop with updated instructions
+
+This is optional — by default the loop NEVER stops for review.
 
 ---
 
@@ -509,89 +498,128 @@ Bad descriptions:
 
 ### Crash Recovery Protocol
 
-When `grep` returns empty (run.log has no metric line):
+1. `tail -50 run.log` — diagnose
+2. Classify:
+   - **Trivial** (typo, missing import, syntax) → fix and re-run same experiment
+   - **Resource** (OOM, disk full) → scale back and retry
+   - **Fundamental** (logic error, impossible constraint) → mark crash, discard
+3. After 3 **consecutive** crashes → **STOP and REPORT** to user
+4. After 3 **total** crashes of the same type → add to anti-pattern list
 
-1. `tail -n 50 run.log` — read the error
-2. Classify the error:
-   - **Typo / syntax error** → fix immediately, re-run same experiment
-   - **Resource exhaustion** → reduce resource usage, try again
-   - **Fundamental design flaw** → mark crash, discard, move on
-   - **Timeout** → kill process, mark crash, discard
-3. After 3 consecutive crashes → **stop and report to user**
-   (something is fundamentally broken)
-
-### Metric Stagnation Detection
+### Stagnation Detection
 
 If 10+ consecutive experiments are all "discard":
-- The agent is stuck in a local optimum
-- Strategy: try larger, more radical changes
-- Consider reverting to an earlier commit and trying a different direction
-- Re-read `program.md` — maybe the search space needs redefining
+1. Acknowledge: "Detected stagnation after 10 consecutive discards."
+2. Strategy shift:
+   - Try the **opposite** of what you've been doing
+   - Revert to best commit and try a **radically different** direction
+   - Re-read program.md — are you missing something?
+   - Try **simplifying** the code rather than adding complexity
+3. If 20+ consecutive discards → consider that we might be near the optimum
 
 ### Resource Exhaustion
 
-If memory/disk/API calls are running out:
-- Scale back the experiment size
-- Add a resource check before each run
-- Log resource usage alongside metrics
+If memory/disk/API calls are running low:
+- Scale back experiment size automatically
+- Log resource usage alongside metric
+- At critical threshold → pause and notify user
 
-### When to Actually Stop
+### Metric Gaming Prevention
 
-The agent should ONLY stop when:
-1. The user explicitly interrupts
-2. 3+ consecutive unrecoverable crashes (different causes)
-3. The git branch has diverged in an unfixable way
-4. Disk space is critically low
+The adversarial verification step prevents:
+- "Improvements" that just bypass the evaluation
+- Changes that break correctness but improve the metric
+- Exploiting random seed for better results
+- Overfitting to the test set
 
-The agent should NEVER stop because:
-- "I ran out of ideas" → think harder
-- "It's been running for N hours" → that's the point
-- "I'm not sure if I should continue" → yes you should
+### When to ACTUALLY Stop
+
+**Stop conditions** (must stop):
+- User explicitly interrupts
+- 3+ consecutive unrecoverable crashes from different root causes
+- Git repo in an unrecoverable state
+- Disk critically low (< 100MB)
+
+**Do NOT stop because**:
+- "I ran out of ideas" → think harder, re-read context, try random changes
+- "It's been N hours" → that's the point
+- "I'm not sure if I should continue" → you should
+- "The improvements are small" → small improvements compound
 
 ---
 
-## Advanced Patterns
+## Domain Template Library
 
-### Multi-Metric Experiments
+When scaffolding, reference these pre-built patterns for common domains.
 
-If the user has both a primary metric AND a correctness constraint:
+### Web Performance (Crawler / API / Server)
 
 ```
-1. Run experiment
-2. Check correctness metric first
-3. If correctness failed → DISCARD regardless of primary metric
-4. If correctness passed → evaluate primary metric normally
+Metric: total_time_seconds (or requests_per_second)
+Editable: crawler.py, server.py, or handler.py
+Common knobs: concurrency, connection pooling, caching, serialization format,
+              batch size, timeout values, async vs sync, compression
+Common constraints: correctness (same results), no new dependencies,
+                    rate limits on target
 ```
 
-The correctness check goes in the fixed infrastructure file.
+### Database Query Optimization
 
-### Warmup/Cooldown
+```
+Metric: execution_time_ms
+Editable: query.sql or query_builder.py
+Common knobs: JOIN order, index hints, subquery vs CTE, temp tables,
+              batch size, fetch size, connection params
+Common constraints: identical result set (verified by checksum or row count),
+                    no schema changes, no new indexes (unless allowed)
+```
 
-Some experiments need warmup (JIT compilation, cache warming). Account for this:
-- Specify in program.md: "Ignore first N steps/metrics"
-- The evaluation function in prepare.py handles this
+### ML Hyperparameter Tuning
 
-### Parallel Experiment Branches
+```
+Metric: val_loss (or val_accuracy, F1, etc.) — lower/higher better
+Editable: train.py or config.yaml
+Common knobs: learning_rate, batch_size, n_layers, hidden_dim, dropout,
+              optimizer choice, scheduler type, weight_decay
+Common constraints: fixed time budget per run, no changing model architecture
+                    beyond what's in scope, no data augmentation changes
+```
 
-Advanced: run multiple git branches in parallel from the same base:
-- `autoresearch/<tag>-gpu0` — explores architecture changes
-- `autoresearch/<tag>-gpu1` — explores optimizer changes
-- Merge the best results from each
+### Code Bundle Size (Webpack / Build)
 
-This requires multiple agent instances.
+```
+Metric: bundle_size_kb (lower better)
+Editable: webpack.config.js, vite.config.js, or next.config.js
+Common knobs: code splitting strategy, minification options, tree shaking,
+              dynamic imports, chunk size limits, compression algorithm
+Common constraints: app must still function correctly (smoke test passes),
+                    no removing features, no external CDN dependencies
+```
 
-### Human-in-the-Loop Review
+### CI/CD Pipeline Speed
 
-After the agent stops, the human reviews:
-1. `git log autoresearch/<tag>` — clean history of only successful changes
-2. `results.tsv` — complete lab notebook of every attempt
-3. `run.log` — output of the last (best) experiment
-4. The editable file itself — final state after all improvements
+```
+Metric: pipeline_duration_seconds (lower better)
+Editable: .github/workflows/ci.yml, Jenkinsfile, or pipeline.py
+Common knobs: parallel job count, cache strategy, test splitting,
+              Docker layer caching, artifact handling, runner selection
+Common constraints: all tests must still pass, no skipping checks,
+                    security scans must still run
+```
 
-The human then:
-- Updates `program.md` with lessons learned
-- Starts a new branch for the next night's research
-- The process compounds over time
+### Algorithm Competition (LeetCode / CP)
+
+```
+Metric: execution_time_ms or score
+Editable: solution.py
+Common knobs: algorithm choice (BFS/DFS, DP, greedy), data structure selection,
+              early termination, pruning, memoization, bit manipulation
+Common constraints: must pass ALL test cases (correctness non-negotiable),
+                    no hardcoded answers, language/platform constraints
+```
+
+When the user's task matches one of these domains, use the relevant template as
+a starting point for the interview and scaffold.
 
 ---
 
@@ -599,13 +627,13 @@ The human then:
 
 When user says "use autoresearch to...":
 
-- [ ] Phase 1: Interview user (all 10 questions across 4 rounds)
-- [ ] Phase 1: Summarize and get confirmation
-- [ ] Phase 2: Generate `program.md`
-- [ ] Phase 2: Generate fixed infrastructure (prepare equivalent)
-- [ ] Phase 2: Prepare/verify editable sandbox (train equivalent)
-- [ ] Phase 2: Create `.gitignore`
-- [ ] Phase 2: Run baseline experiment to verify everything works
-- [ ] Phase 2: Create `results.tsv` with header and baseline row
-- [ ] Phase 2: Create git branch `autoresearch/<tag>`
-- [ ] Phase 3: Enter autonomous loop (NEVER STOP until interrupted)
+- [ ] **Phase 1**: 10 questions across 4 rounds → confirm understanding
+- [ ] **Phase 2.1**: Generate `program.md` from filled template
+- [ ] **Phase 2.2**: Create fixed infrastructure (prepare.py equivalent)
+- [ ] **Phase 2.3**: Prepare editable sandbox (train.py equivalent)
+- [ ] **Phase 2.4**: Create `.gitignore`
+- [ ] **Phase 2.5**: Run baseline → verify works → record in results.tsv
+- [ ] **Phase 2.6**: `git checkout -b autoresearch/<tag>`, commit scaffold
+- [ ] **Phase 2.7**: Write initial `.autoresearch_checkpoint.json`
+- [ ] **Phase 3**: Enter loop with smart selection + adversarial verification
+- [ ] **On interrupt**: Final checkpoint save, status summary to user
