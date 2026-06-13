@@ -1,0 +1,12 @@
+{
+  "name": "autoresearch",
+  "version": "1.0.0",
+  "description": "Autonomous experiment loop pattern — interview the user, scaffold a self-running research project, then iterate: modify → commit → run → evaluate → keep/discard → repeat. Based on karpathy/autoresearch pattern.",
+  "author": {
+    "name": "init-cc",
+    "url": "https://github.com/init-cc/AutoResearch-skill"
+  },
+  "repository": "https://github.com/init-cc/AutoResearch-skill",
+  "license": "MIT",
+  "keywords": ["autoresearch", "autonomous", "experiment", "optimization", "agent-loop", "automation", "research"]
+}
